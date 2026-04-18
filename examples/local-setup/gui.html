@@ -562,18 +562,37 @@ const AGENT_SYSTEM =
 function parseToolFromContent(content){
   if(!content) return null;
   const s = content.trim();
-  // tentar parsear content inteiro ou primeiro bloco ```json
-  const match = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = match ? match[1].trim() : s;
-  try{
-    const obj = JSON.parse(candidate);
-    if(obj && typeof obj.name === 'string'){
-      const args = obj.arguments ?? obj.parameters ?? obj.args ?? {};
-      if(AGENT_TOOLS.some(t=>t.function.name === obj.name)){
+  const candidates = [];
+  // 1) Bloco ```json ... ```
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if(fence) candidates.push(fence[1].trim());
+  // 2) String inteira
+  candidates.push(s);
+  // 3) Primeiro {...} balanceado na string (modelos gostam de prefaciar com prosa)
+  let depth=0, start=-1;
+  for(let i=0;i<s.length;i++){
+    if(s[i]==='{'){ if(depth===0) start=i; depth++; }
+    else if(s[i]==='}'){ depth--; if(depth===0 && start!==-1){ candidates.push(s.slice(start,i+1)); start=-1; } }
+  }
+  for(const c of candidates){
+    try{
+      const obj = JSON.parse(c);
+      if(obj && typeof obj.name === 'string'){
+        if(!AGENT_TOOLS.some(t=>t.function.name === obj.name)) continue;
+        let args = obj.arguments ?? obj.parameters ?? obj.args ?? null;
+        // Formato achatado: {"name":"X","query":"..."} — pega todas as outras chaves
+        if(args == null || (typeof args === 'object' && Object.keys(args).length === 0)){
+          args = {};
+          for(const [k,v] of Object.entries(obj)){
+            if(k !== 'name' && k !== 'arguments' && k !== 'parameters' && k !== 'args'){
+              args[k] = v;
+            }
+          }
+        }
         return { name: obj.name, arguments: args };
       }
-    }
-  }catch{}
+    }catch{}
+  }
   return null;
 }
 
