@@ -24,6 +24,20 @@ O instalador faz tudo:
 
 **Pré-requisitos:** Node.js 18+, ~25GB de disco livre, internet.
 
+## Interface gráfica (recomendado)
+
+Para quem odeia terminal:
+
+```cmd
+start-gui.cmd
+```
+
+Abre uma página dark-theme no navegador com:
+- **Chat** com qualquer modelo instalado, streaming em tempo real, markdown + syntax highlight
+- **Demos** (AI↔AI, Debate, Plan→Exec→Review, Raciocínio) com UI bonita e cada etapa em card separado
+
+Roda um mini-servidor em `localhost:5173`. Fecha o terminal pra parar.
+
 ## O que cada coisa faz
 
 ### Chat e agente (uso diário)
