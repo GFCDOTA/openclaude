@@ -361,6 +361,16 @@ async function runCouncil(pergunta, ui){
   addTurn(ui.internal, 'deepseek-r1', r2);
   agents[1].state='done'; setStatus(ui.status, agents);
 
+  // Curto-circuito: se qwen recusou por ser pedido de acao, nao sintetiza — ecoa a recusa
+  const isRefusal = /nao consigo executar|usa a aba agente/i.test(r1);
+  if(isRefusal){
+    agents[2].state='done'; setStatus(ui.status, agents);
+    const final = "Não consigo executar aqui no Chat. Usa a aba **Agente** pra isso — ela tem ferramentas reais (bash, web, file ops) e executa de verdade. Este modo Conselho é só pra conversa/consulta de conhecimento.";
+    ui.body.innerHTML = marked.parse(final);
+    setTimeout(()=>{ui.status.style.display='none';}, 1500);
+    return final;
+  }
+
   // 3) Llama sintetiza — rapido, sem tags, vai streaming no chat principal
   agents[2].state='active'; setStatus(ui.status, agents);
   const synthPrompt =
@@ -368,8 +378,10 @@ async function runCouncil(pergunta, ui){
     `Pergunta do usuario: "${pergunta}"\n\n` +
     `Opiniao tecnica:\n${r1}\n\n` +
     `Analise critica:\n${r2}\n\n` +
-    `Fundindo o melhor das duas, responda a pergunta original em portugues, de forma CONCISA e direta. ` +
-    `Nao cite as opinioes nem mencione que foram consultadas. Apenas responda bem. Maximo 180 palavras.`;
+    `REGRA: Se a pergunta pede ACAO (criar PR, clonar, rodar, editar, commitar), responda APENAS: ` +
+    `"Nao consigo executar aqui no Chat. Usa a aba Agente." e NADA mais.\n` +
+    `Se for pergunta de conhecimento, funda as duas opinioes em UMA resposta concisa em portugues, ` +
+    `direto ao ponto, sem citar que sao opinioes. Maximo 180 palavras.`;
 
   let acc = '';
   await streamChat('llama3.1:8b', [{role:'user',content:synthPrompt}], (tok)=>{
