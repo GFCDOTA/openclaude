@@ -330,50 +330,58 @@ async function askSimple(model, content, maxTokens){
 
 async function runCouncil(pergunta, ui){
   const agents = [
-    {name:'llama', state:'pending'},
     {name:'qwen-coder', state:'pending'},
     {name:'deepseek-r1', state:'pending'},
+    {name:'llama (sintese)', state:'pending'},
   ];
   setStatus(ui.status, agents);
 
-  // 1) Llama primeira resposta
+  const ACTION_RULE =
+    "IMPORTANTE: Voce so pode RESPONDER em texto. Voce NAO tem ferramentas pra executar nada " +
+    "(nao cria PR, nao edita arquivo, nao roda comando, nao busca web). " +
+    "Se a pergunta pedir execucao, responda APENAS: 'Nao consigo executar aqui no Chat. " +
+    "Usa a aba Agente pra isso.' e NADA mais.";
+
+  // 1) Qwen da resposta tecnica inicial
   agents[0].state='active'; setStatus(ui.status, agents);
-  const r1 = await askSimple('llama3.1:8b',
-    `Pergunta do usuario: "${pergunta}"\n\nRESPONDA em portugues, direto, maximo 4 frases.`,
-    250);
-  addTurn(ui.internal, 'llama', r1);
+  const r1 = await askSimple('qwen2.5-coder:14b',
+    `${ACTION_RULE}\n\nPergunta do usuario: "${pergunta}"\n\nResponda em portugues, direto, com detalhes tecnicos relevantes. Maximo 5 frases.`,
+    350);
+  addTurn(ui.internal, 'qwen-coder', r1);
   agents[0].state='done'; setStatus(ui.status, agents);
 
-  // 2) Qwen critica/complementa
+  // 2) DeepSeek-R1 raciocina e critica/melhora
   agents[1].state='active'; setStatus(ui.status, agents);
-  const r2 = await askSimple('qwen2.5-coder:14b',
-    `Pergunta original: "${pergunta}"\n\nOutra IA respondeu:\n"${r1}"\n\n` +
-    `Voce concorda? O que acrescentaria ou corrigiria? Se for sobre codigo, de exemplo tecnico. Maximo 4 frases.`,
-    300);
-  addTurn(ui.internal, 'qwen-coder', r2);
+  const r2raw = await askSimple('deepseek-r1:14b',
+    `${ACTION_RULE}\n\nPergunta original: "${pergunta}"\n\nOutra IA respondeu:\n"${r1}"\n\n` +
+    `Analise criticamente. O que esta certo, o que falta, o que melhorar? Maximo 5 frases.`,
+    600);
+  // strip <think>...</think> se existir
+  const r2 = r2raw.replace(/<think>[\s\S]*?<\/think>\s*/g,'').trim() || r2raw;
+  addTurn(ui.internal, 'deepseek-r1', r2);
   agents[1].state='done'; setStatus(ui.status, agents);
 
-  // 3) DeepSeek sintetiza — esse e o que aparece em cima
+  // 3) Llama sintetiza — rapido, sem tags, vai streaming no chat principal
   agents[2].state='active'; setStatus(ui.status, agents);
   const synthPrompt =
+    `${ACTION_RULE}\n\n` +
     `Pergunta do usuario: "${pergunta}"\n\n` +
-    `Opiniao 1 (llama):\n${r1}\n\n` +
-    `Opiniao 2 (qwen-coder):\n${r2}\n\n` +
+    `Opiniao tecnica:\n${r1}\n\n` +
+    `Analise critica:\n${r2}\n\n` +
     `Fundindo o melhor das duas, responda a pergunta original em portugues, de forma CONCISA e direta. ` +
-    `Nao cite as opinioes nem mencione que foram consultadas. Apenas responda bem. Maximo 150 palavras.`;
+    `Nao cite as opinioes nem mencione que foram consultadas. Apenas responda bem. Maximo 180 palavras.`;
 
   let acc = '';
-  await streamChat('deepseek-r1:14b', [{role:'user',content:synthPrompt}], (tok)=>{
+  await streamChat('llama3.1:8b', [{role:'user',content:synthPrompt}], (tok)=>{
     acc += tok;
-    const clean = acc.replace(/<think>[\s\S]*?(<\/think>|$)/g,'').trim();
-    ui.body.innerHTML = marked.parse(clean);
+    ui.body.innerHTML = marked.parse(acc);
     ui.body.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
     messagesEl.scrollTop = messagesEl.scrollHeight;
   });
   agents[2].state='done'; setStatus(ui.status, agents);
   setTimeout(()=>{ui.status.style.display='none';}, 1500);
 
-  return acc.replace(/<think>[\s\S]*?<\/think>\s*/g,'').trim();
+  return acc.trim();
 }
 
 $('#composer').onsubmit = async (e)=>{
