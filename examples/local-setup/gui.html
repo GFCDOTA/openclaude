@@ -52,6 +52,24 @@ main{height:calc(100vh - 102px);overflow:hidden;display:flex;flex-direction:colu
 .internal summary:hover{color:var(--text)}
 .internal .turn{margin-top:10px;padding:10px 12px;background:var(--panel2);border-left:3px solid var(--border);border-radius:4px;font-size:13px}
 .internal .turn .agent-tag{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+
+/* agent tab */
+#agent-log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.agent-entry{border:1px solid var(--border);border-radius:8px;background:var(--panel);padding:12px 14px}
+.agent-entry.user{background:#2a3555;border-color:#3a4878}
+.agent-entry .head{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px}
+.agent-entry .head .tag{background:var(--panel2);padding:2px 7px;border-radius:10px;font-size:10px}
+.agent-entry.tool .head{color:var(--warn)}
+.agent-entry.tool .head .tag{background:#3a2d0e;color:var(--warn)}
+.agent-entry.final .head{color:var(--good)}
+.agent-entry.final .head .tag{background:#0e3a1d;color:var(--good)}
+.agent-entry .body{line-height:1.5;font-size:14px}
+.agent-entry pre{background:#0a0c10;border:1px solid var(--border);border-radius:6px;padding:10px;overflow-x:auto;margin:6px 0;font-size:12px;font-family:ui-monospace,Consolas}
+.agent-entry .tool-call{font-family:ui-monospace,Consolas;font-size:12px;color:var(--accent)}
+.agent-entry details summary{cursor:pointer;color:var(--muted);font-size:12px}
+.agent-entry details summary:hover{color:var(--text)}
+.agent-entry .out{margin-top:6px;padding:8px;background:#0a0c10;border-radius:4px;font-family:ui-monospace,Consolas;font-size:11px;white-space:pre-wrap;max-height:300px;overflow-y:auto}
+.agent-entry .out.err{color:#ef4444}
 .msg pre{background:#0a0c10;border:1px solid var(--border);border-radius:6px;padding:12px;overflow-x:auto;margin:8px 0;font-size:13px}
 .msg code{font-family:ui-monospace,Consolas,Menlo;font-size:0.9em}
 .msg :not(pre) > code{background:#0a0c10;padding:2px 5px;border-radius:3px;color:#ffb86b}
@@ -101,6 +119,7 @@ footer{font-size:11px;color:var(--muted);padding:6px 16px;background:var(--panel
 
 <nav>
   <button data-tab="chat" class="active">Chat</button>
+  <button data-tab="agent">Agente</button>
   <button data-tab="demos">Demos</button>
 </nav>
 
@@ -120,6 +139,23 @@ footer{font-size:11px;color:var(--muted);padding:6px 16px;background:var(--panel
     <form id="composer">
       <textarea id="input" placeholder="Pergunta ou tarefa… (Shift+Enter pra quebrar linha)" rows="1"></textarea>
       <button type="submit" id="send">Enviar</button>
+    </form>
+  </section>
+
+  <section class="tab" id="tab-agent">
+    <div class="chat-head">
+      <label style="font-size:13px;color:var(--muted)">Agente:</label>
+      <select id="agent-model">
+        <option value="qwen2.5-coder:14b" selected>qwen2.5-coder:14b (recomendado)</option>
+        <option value="llama3.1:8b">llama3.1:8b (mais leve)</option>
+      </select>
+      <span id="agent-cwd" style="font-size:12px;color:var(--muted);margin-left:auto;font-family:ui-monospace"></span>
+      <button id="agent-clear">Limpar</button>
+    </div>
+    <div id="agent-log"></div>
+    <form id="agent-composer">
+      <textarea id="agent-input" placeholder='Peça uma tarefa. Ex: "liste os arquivos aqui e resuma o README"  ou  "crie hello.py e rode ele"' rows="1"></textarea>
+      <button type="submit" id="agent-send">Executar</button>
     </form>
   </section>
 
@@ -465,6 +501,190 @@ async function runOne(stepTitle, model, prompt, maxTokens){
     throw e;
   }
 }
+
+// === AGENTE ===
+const AGENT_TOOLS = [
+  {type:'function', function:{
+    name:'run_bash', description:'Executa um comando bash/cmd. Retorna stdout, stderr, exit_code.',
+    parameters:{type:'object', required:['command'], properties:{
+      command:{type:'string', description:'Comando a executar.'},
+      cwd:{type:'string', description:'Subdiretorio relativo ao workspace (opcional).'},
+      timeout_ms:{type:'number', description:'Timeout em ms (default 60000).'}
+    }}
+  }},
+  {type:'function', function:{
+    name:'read_file', description:'Le um arquivo como texto UTF-8.',
+    parameters:{type:'object', required:['path'], properties:{
+      path:{type:'string', description:'Caminho relativo ou absoluto.'}
+    }}
+  }},
+  {type:'function', function:{
+    name:'write_file', description:'Escreve texto em um arquivo (sobrescreve).',
+    parameters:{type:'object', required:['path','content'], properties:{
+      path:{type:'string'}, content:{type:'string'}
+    }}
+  }},
+  {type:'function', function:{
+    name:'list_dir', description:'Lista arquivos e subdirs de uma pasta.',
+    parameters:{type:'object', properties:{
+      path:{type:'string', description:'Default: pasta atual (.)'}
+    }}
+  }},
+];
+const AGENT_SYSTEM =
+  "Voce e um agente de engenharia de software. Para usar uma tool, responda APENAS com um JSON " +
+  "neste formato exato, sem texto antes ou depois:\n" +
+  '{"name": "TOOL_NAME", "arguments": { ... }}\n' +
+  "Tools disponiveis:\n" +
+  " - run_bash({command, cwd?, timeout_ms?}) — roda comando bash/cmd\n" +
+  " - read_file({path}) — le arquivo UTF-8\n" +
+  " - write_file({path, content}) — escreve arquivo\n" +
+  " - list_dir({path}) — lista pasta (default '.')\n" +
+  "Quando a tarefa estiver PRONTA, responda com TEXTO em portugues (sem JSON) resumindo o que foi feito. " +
+  "Trabalhe passo-a-passo, UMA tool por vez. Ja esta no workspace correto. " +
+  "Nao peca confirmacao — o usuario ja autorizou.";
+
+// extrai tool call do content text caso Ollama nao wire tool_calls
+function parseToolFromContent(content){
+  if(!content) return null;
+  const s = content.trim();
+  // tentar parsear content inteiro ou primeiro bloco ```json
+  const match = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = match ? match[1].trim() : s;
+  try{
+    const obj = JSON.parse(candidate);
+    if(obj && typeof obj.name === 'string'){
+      const args = obj.arguments ?? obj.parameters ?? obj.args ?? {};
+      if(AGENT_TOOLS.some(t=>t.function.name === obj.name)){
+        return { name: obj.name, arguments: args };
+      }
+    }
+  }catch{}
+  return null;
+}
+
+(async ()=>{
+  try{
+    const r = await fetch('/api/config'); const c = await r.json();
+    $('#agent-cwd').textContent = 'cwd: ' + c.cwd;
+  }catch{}
+})();
+
+const agentLog = $('#agent-log');
+const agentHistory = [{role:'system', content:AGENT_SYSTEM}];
+
+function agentEntry(kind, headText){
+  const div = document.createElement('div');
+  div.className = 'agent-entry ' + kind;
+  const head = document.createElement('div'); head.className='head';
+  head.innerHTML = `<span class="tag">${headText}</span>`;
+  div.appendChild(head);
+  const body = document.createElement('div'); body.className='body';
+  div.appendChild(body);
+  agentLog.appendChild(div);
+  agentLog.scrollTop = agentLog.scrollHeight;
+  return body;
+}
+
+async function callTool(name, args){
+  const r = await fetch('/api/tool/' + name, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(args || {})
+  });
+  const d = await r.json();
+  return d.ok ? d.result : { error: d.error };
+}
+
+function summarizeToolResult(name, result){
+  if(result.error) return { short:`erro: ${result.error}`, full: result.error, isErr:true };
+  if(name === 'run_bash'){
+    const s = (result.stdout || '').slice(0, 400);
+    const e = (result.stderr || '').slice(0, 200);
+    const short = `exit ${result.exit_code}` + (result.stdout?`, stdout ${result.stdout.length}b`:'') + (result.stderr?`, stderr ${result.stderr.length}b`:'');
+    const full = `exit_code=${result.exit_code}\n--- stdout ---\n${s}${result.stdout?.length > 400 ? '\n...[truncado]':''}\n--- stderr ---\n${e}`;
+    return { short, full };
+  }
+  if(name === 'read_file') return { short:`${result.size||0} bytes`, full: (result.content||'').slice(0,1000) };
+  if(name === 'write_file') return { short:`${result.bytes_written||0}b escritos`, full: result.path };
+  if(name === 'list_dir') return { short:`${result.entries?.length||0} entradas`, full:(result.entries||[]).map(e=>`${e.type==='dir'?'[D]':'   '} ${e.name}`).join('\n') };
+  return { short: 'ok', full: JSON.stringify(result, null, 2).slice(0,1000) };
+}
+
+async function agentChatCall(messages){
+  const r = await fetch(OLLAMA('/v1/chat/completions'),{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model: $('#agent-model').value,
+      messages, tools: AGENT_TOOLS, tool_choice: 'auto', max_tokens: 1500
+    })
+  });
+  if(!r.ok) throw new Error('Ollama HTTP '+r.status);
+  const d = await r.json();
+  return d.choices[0].message; // {role, content, tool_calls?}
+}
+
+async function runAgent(userText){
+  const userBody = agentEntry('user','você'); userBody.textContent = userText;
+  agentHistory.push({role:'user', content:userText});
+
+  const MAX_STEPS = 20;
+  for(let step=0; step<MAX_STEPS; step++){
+    const think = agentEntry('tool','pensando…'); think.innerHTML = '<em style="color:var(--muted)">…</em>';
+    let msg;
+    try{ msg = await agentChatCall(agentHistory); }
+    catch(e){ think.innerHTML = '<em style="color:#ef4444">'+e.message+'</em>'; return; }
+    think.parentElement.remove();
+
+    // tool calls via OpenAI structured format
+    const structured = (msg.tool_calls || []).map(tc=>{
+      let args = {};
+      try{ args = JSON.parse(tc.function.arguments || '{}'); }catch{}
+      return { name: tc.function.name, arguments: args, _tcid: tc.id };
+    });
+    // fallback: tool call como JSON no content text
+    const fallback = structured.length ? null : parseToolFromContent(msg.content);
+    const toolCalls = structured.length ? structured : (fallback ? [fallback] : []);
+
+    if(toolCalls.length){
+      agentHistory.push({ role:'assistant', content: msg.content || '' });
+      for(const tc of toolCalls){
+        const body = agentEntry('tool', tc.name);
+        body.innerHTML = `<div class="tool-call">${tc.name}(${Object.entries(tc.arguments).map(([k,v])=>`${k}=${JSON.stringify(v).slice(0,80)}`).join(', ')})</div>`;
+        const result = await callTool(tc.name, tc.arguments);
+        const sum = summarizeToolResult(tc.name, result);
+        body.innerHTML += `<details><summary>→ ${sum.short}</summary><div class="out ${sum.isErr?'err':''}">${sum.full.replace(/</g,'&lt;')}</div></details>`;
+        agentHistory.push({
+          role:'user',
+          content: `Resultado de ${tc.name}:\n\`\`\`json\n${JSON.stringify(result).slice(0, 3000)}\n\`\`\``
+        });
+        agentLog.scrollTop = agentLog.scrollHeight;
+      }
+      continue;
+    }
+
+    // sem tool = resposta final
+    agentHistory.push({role:'assistant', content: msg.content || ''});
+    const body = agentEntry('final','pronto');
+    body.innerHTML = marked.parse(msg.content || '(sem resposta)');
+    body.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
+    return;
+  }
+  agentEntry('tool','limite').innerHTML = `<em style="color:var(--warn)">${MAX_STEPS} passos atingidos, parando</em>`;
+}
+
+$('#agent-composer').onsubmit = async (e)=>{
+  e.preventDefault();
+  const input = $('#agent-input'); const txt = input.value.trim(); if(!txt) return;
+  input.value=''; input.style.height='auto';
+  const btn = $('#agent-send'); btn.disabled=true; btn.textContent='executando…';
+  try{ await runAgent(txt); }
+  finally{ btn.disabled=false; btn.textContent='Executar'; }
+};
+$('#agent-input').onkeydown = (e)=>{
+  if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); $('#agent-composer').requestSubmit();}
+};
+$('#agent-input').oninput = (e)=>{e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px';};
+$('#agent-clear').onclick = ()=>{agentHistory.length=1; agentLog.innerHTML='';};
 
 document.querySelectorAll('.card button').forEach(btn=>{
   btn.onclick = async ()=>{
