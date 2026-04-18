@@ -39,6 +39,19 @@ main{height:calc(100vh - 102px);overflow:hidden;display:flex;flex-direction:colu
 .msg.ai{align-self:flex-start;background:var(--panel);border:1px solid var(--border)}
 .msg .who{font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px}
 .msg.ai .who{color:var(--accent)}
+.council-status{font-size:12px;color:var(--muted);margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.council-status .agent{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:12px;font-size:11px}
+.council-status .agent.active{border-color:var(--accent);color:var(--accent)}
+.council-status .agent.done{border-color:var(--good);color:var(--good)}
+.council-status .agent .sp{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.council-status .agent.active .sp{background:var(--accent);animation:pulse 1s infinite}
+.council-status .agent.done .sp{background:var(--good)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+.internal{margin-top:12px;border-top:1px dashed var(--border);padding-top:10px}
+.internal summary{cursor:pointer;color:var(--muted);font-size:12px;padding:4px 0;outline:none}
+.internal summary:hover{color:var(--text)}
+.internal .turn{margin-top:10px;padding:10px 12px;background:var(--panel2);border-left:3px solid var(--border);border-radius:4px;font-size:13px}
+.internal .turn .agent-tag{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
 .msg pre{background:#0a0c10;border:1px solid var(--border);border-radius:6px;padding:12px;overflow-x:auto;margin:8px 0;font-size:13px}
 .msg code{font-family:ui-monospace,Consolas,Menlo;font-size:0.9em}
 .msg :not(pre) > code{background:#0a0c10;padding:2px 5px;border-radius:3px;color:#ffb86b}
@@ -95,8 +108,12 @@ footer{font-size:11px;color:var(--muted);padding:6px 16px;background:var(--panel
 
   <section class="tab active" id="tab-chat">
     <div class="chat-head">
-      <label style="font-size:13px;color:var(--muted)">Modelo:</label>
-      <select id="model"></select>
+      <label style="font-size:13px;color:var(--muted)">Modo:</label>
+      <select id="mode">
+        <option value="council">Conselho — 3 IAs conversam, resposta concisa (recomendado)</option>
+        <option value="single">Direto — 1 modelo só (mais rápido)</option>
+      </select>
+      <select id="model" style="display:none"></select>
       <button id="clear">Limpar</button>
     </div>
     <div id="messages"></div>
@@ -224,25 +241,137 @@ async function streamChat(model, messages, onToken){
   }
 }
 
+// mode toggle — show/hide model picker
+$('#mode').onchange = ()=>{
+  $('#model').style.display = $('#mode').value==='single'?'':'none';
+};
+
+function addAiMsg(){
+  const div = document.createElement('div');
+  div.className = 'msg ai';
+  const who = document.createElement('div'); who.className='who';
+  who.textContent = $('#mode').value==='council'?'Conselho':$('#model').value;
+  div.appendChild(who);
+  const status = document.createElement('div'); status.className='council-status';
+  div.appendChild(status);
+  const body = document.createElement('div'); body.className='body';
+  div.appendChild(body);
+  const internal = document.createElement('details'); internal.className='internal';
+  internal.innerHTML = '<summary>ver discussão interna</summary>';
+  internal.style.display = 'none';
+  div.appendChild(internal);
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return {div, status, body, internal};
+}
+
+function setStatus(statusEl, agents){
+  statusEl.innerHTML = agents.map(a=>
+    `<span class="agent ${a.state}"><span class="sp"></span>${a.name}</span>`
+  ).join('') + (agents.every(a=>a.state==='done') ? '' : ' <span style="color:var(--muted)">discutindo...</span>');
+}
+
+function addTurn(internal, agentName, content){
+  internal.style.display='';
+  const div = document.createElement('div'); div.className='turn';
+  div.innerHTML = `<div class="agent-tag">${agentName}</div><div>${marked.parse(content)}</div>`;
+  internal.appendChild(div);
+  div.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
+}
+
+async function askSimple(model, content, maxTokens){
+  const r = await fetch(OLLAMA('/v1/chat/completions'),{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({model, messages:[{role:'user',content}], max_tokens:maxTokens})
+  });
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const d = await r.json();
+  let out = d.choices[0].message.content.trim();
+  // deepseek-r1 vomita <think>...</think>; tira da saída user-visible
+  out = out.replace(/<think>[\s\S]*?<\/think>\s*/g,'').trim();
+  return out;
+}
+
+async function runCouncil(pergunta, ui){
+  const agents = [
+    {name:'llama', state:'pending'},
+    {name:'qwen-coder', state:'pending'},
+    {name:'deepseek-r1', state:'pending'},
+  ];
+  setStatus(ui.status, agents);
+
+  // 1) Llama primeira resposta
+  agents[0].state='active'; setStatus(ui.status, agents);
+  const r1 = await askSimple('llama3.1:8b',
+    `Pergunta do usuario: "${pergunta}"\n\nRESPONDA em portugues, direto, maximo 4 frases.`,
+    250);
+  addTurn(ui.internal, 'llama', r1);
+  agents[0].state='done'; setStatus(ui.status, agents);
+
+  // 2) Qwen critica/complementa
+  agents[1].state='active'; setStatus(ui.status, agents);
+  const r2 = await askSimple('qwen2.5-coder:14b',
+    `Pergunta original: "${pergunta}"\n\nOutra IA respondeu:\n"${r1}"\n\n` +
+    `Voce concorda? O que acrescentaria ou corrigiria? Se for sobre codigo, de exemplo tecnico. Maximo 4 frases.`,
+    300);
+  addTurn(ui.internal, 'qwen-coder', r2);
+  agents[1].state='done'; setStatus(ui.status, agents);
+
+  // 3) DeepSeek sintetiza — esse e o que aparece em cima
+  agents[2].state='active'; setStatus(ui.status, agents);
+  const synthPrompt =
+    `Pergunta do usuario: "${pergunta}"\n\n` +
+    `Opiniao 1 (llama):\n${r1}\n\n` +
+    `Opiniao 2 (qwen-coder):\n${r2}\n\n` +
+    `Fundindo o melhor das duas, responda a pergunta original em portugues, de forma CONCISA e direta. ` +
+    `Nao cite as opinioes nem mencione que foram consultadas. Apenas responda bem. Maximo 150 palavras.`;
+
+  let acc = '';
+  await streamChat('deepseek-r1:14b', [{role:'user',content:synthPrompt}], (tok)=>{
+    acc += tok;
+    const clean = acc.replace(/<think>[\s\S]*?(<\/think>|$)/g,'').trim();
+    ui.body.innerHTML = marked.parse(clean);
+    ui.body.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  });
+  agents[2].state='done'; setStatus(ui.status, agents);
+  setTimeout(()=>{ui.status.style.display='none';}, 1500);
+
+  return acc.replace(/<think>[\s\S]*?<\/think>\s*/g,'').trim();
+}
+
 $('#composer').onsubmit = async (e)=>{
   e.preventDefault();
   const input = $('#input'); const txt = input.value.trim(); if(!txt) return;
-  const model = $('#model').value;
-  if(!model){alert('sem modelo — Ollama rodando?'); return;}
-  addMsg('user', txt); history.push({role:'user',content:txt});
+  const mode = $('#mode').value;
+  addMsg('user', txt);
   input.value=''; input.style.height='auto';
-  const body = addMsg('ai',''); let acc='';
   const btn = $('#send'); btn.disabled=true; btn.textContent='…';
+
   try{
-    await streamChat(model, history, (tok)=>{
-      acc += tok;
-      body.innerHTML = marked.parse(acc);
-      body.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    });
-    history.push({role:'assistant',content:acc});
+    if(mode === 'council'){
+      const ui = addAiMsg();
+      const final = await runCouncil(txt, ui);
+      history.push({role:'user',content:txt}, {role:'assistant',content:final});
+    }else{
+      const model = $('#model').value;
+      if(!model){alert('sem modelo — Ollama rodando?'); return;}
+      history.push({role:'user',content:txt});
+      const ui = addAiMsg();
+      ui.status.style.display='none';
+      let acc='';
+      await streamChat(model, history, (tok)=>{
+        acc += tok;
+        ui.body.innerHTML = marked.parse(acc);
+        ui.body.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      });
+      history.push({role:'assistant',content:acc});
+    }
   }catch(err){
-    body.innerHTML = '<em style="color:#ef4444">erro: '+err.message+'</em>';
+    console.error(err);
+    const last = messagesEl.querySelector('.msg.ai:last-child .body');
+    if(last) last.innerHTML = '<em style="color:#ef4444">erro: '+err.message+'</em>';
   }finally{
     btn.disabled=false; btn.textContent='Enviar';
   }
