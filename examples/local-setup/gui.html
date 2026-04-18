@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Local AI</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/11.1.1/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>
+:root{
+  --bg:#0e0f13; --panel:#15171d; --panel2:#1c1f27; --border:#2a2e3a;
+  --text:#e6e8ec; --muted:#8b91a0; --accent:#7c9eff; --good:#4ade80; --warn:#f59e0b;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto;background:var(--bg);color:var(--text);font-size:15px}
+header{display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--panel);gap:12px}
+header h1{font-size:16px;margin:0;font-weight:600}
+header .status{margin-left:auto;font-size:12px;color:var(--muted)}
+header .status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:#555;vertical-align:middle}
+header .status.ok .dot{background:var(--good)}
+header .status.err .dot{background:#ef4444}
+nav{display:flex;background:var(--panel);border-bottom:1px solid var(--border)}
+nav button{background:none;border:0;color:var(--muted);padding:12px 20px;cursor:pointer;font-size:14px;border-bottom:2px solid transparent}
+nav button:hover{color:var(--text)}
+nav button.active{color:var(--accent);border-bottom-color:var(--accent)}
+main{height:calc(100vh - 102px);overflow:hidden;display:flex;flex-direction:column}
+.tab{display:none;height:100%;overflow:hidden;flex-direction:column}
+.tab.active{display:flex}
+
+/* chat */
+.chat-head{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--panel)}
+.chat-head select{background:var(--panel2);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:13px}
+.chat-head button{background:var(--panel2);border:1px solid var(--border);color:var(--muted);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px}
+.chat-head button:hover{color:var(--text)}
+#messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth}
+.msg{max-width:80%;padding:12px 16px;border-radius:10px;line-height:1.55}
+.msg.user{align-self:flex-end;background:#2a3555;border:1px solid #3a4878}
+.msg.ai{align-self:flex-start;background:var(--panel);border:1px solid var(--border)}
+.msg .who{font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px}
+.msg.ai .who{color:var(--accent)}
+.msg pre{background:#0a0c10;border:1px solid var(--border);border-radius:6px;padding:12px;overflow-x:auto;margin:8px 0;font-size:13px}
+.msg code{font-family:ui-monospace,Consolas,Menlo;font-size:0.9em}
+.msg :not(pre) > code{background:#0a0c10;padding:2px 5px;border-radius:3px;color:#ffb86b}
+.msg p{margin:4px 0}
+.msg p:first-child{margin-top:0}
+.msg p:last-child{margin-bottom:0}
+.msg ul,.msg ol{margin:6px 0;padding-left:22px}
+.msg table{border-collapse:collapse;margin:8px 0}
+.msg th,.msg td{border:1px solid var(--border);padding:6px 10px;text-align:left}
+.msg th{background:var(--panel2)}
+.msg a{color:var(--accent)}
+.msg hr{border:0;border-top:1px solid var(--border);margin:10px 0}
+
+#composer{display:flex;gap:8px;padding:12px 16px;background:var(--panel);border-top:1px solid var(--border)}
+#composer textarea{flex:1;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:8px;font-family:inherit;font-size:14px;resize:none;min-height:42px;max-height:200px;line-height:1.4}
+#composer textarea:focus{outline:none;border-color:var(--accent)}
+#composer button{background:var(--accent);color:#0b0f1c;border:0;padding:0 20px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px}
+#composer button:disabled{background:var(--panel2);color:var(--muted);cursor:wait}
+
+/* demos */
+.demos{padding:20px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px}
+.card h3{margin:0 0 8px;color:var(--accent);font-size:16px}
+.card .desc{color:var(--muted);font-size:13px;margin-bottom:12px;min-height:36px}
+.card input{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;font-size:13px;margin-bottom:10px;font-family:inherit}
+.card input:focus{outline:none;border-color:var(--accent)}
+.card button{width:100%;background:var(--accent);color:#0b0f1c;border:0;padding:9px;border-radius:6px;cursor:pointer;font-weight:600}
+.card button:disabled{background:var(--panel2);color:var(--muted);cursor:wait}
+.card .flow{font-size:11px;color:var(--muted);margin-top:8px;text-align:center}
+
+#demo-output{padding:20px;overflow-y:auto;flex:1;display:none;flex-direction:column;gap:14px}
+#demo-output.active{display:flex}
+#demo-output .back{align-self:flex-start;background:var(--panel2);border:1px solid var(--border);color:var(--muted);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px}
+#demo-output .step{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}
+#demo-output .step h4{margin:0 0 8px;color:var(--accent);font-size:14px}
+#demo-output .step .body{line-height:1.55}
+
+footer{font-size:11px;color:var(--muted);padding:6px 16px;background:var(--panel);border-top:1px solid var(--border);text-align:center}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Local AI <span style="color:var(--muted);font-weight:400;font-size:12px;margin-left:8px">Ollama + demos</span></h1>
+  <div class="status" id="status"><span class="dot"></span><span id="status-text">checando…</span></div>
+</header>
+
+<nav>
+  <button data-tab="chat" class="active">Chat</button>
+  <button data-tab="demos">Demos</button>
+</nav>
+
+<main>
+
+  <section class="tab active" id="tab-chat">
+    <div class="chat-head">
+      <label style="font-size:13px;color:var(--muted)">Modelo:</label>
+      <select id="model"></select>
+      <button id="clear">Limpar</button>
+    </div>
+    <div id="messages"></div>
+    <form id="composer">
+      <textarea id="input" placeholder="Pergunta ou tarefa… (Shift+Enter pra quebrar linha)" rows="1"></textarea>
+      <button type="submit" id="send">Enviar</button>
+    </form>
+  </section>
+
+  <section class="tab" id="tab-demos">
+    <div class="demos" id="demo-cards">
+      <div class="card" data-demo="ai-to-ai">
+        <h3>AI ↔ AI</h3>
+        <div class="desc">Llama bola uma pergunta, Qwen-Coder responde, Llama comenta.</div>
+        <input type="text" placeholder="tópico (opcional)" />
+        <button>Rodar</button>
+        <div class="flow">llama → qwen → llama</div>
+      </div>
+      <div class="card" data-demo="debate">
+        <h3>Debate 3 agentes</h3>
+        <div class="desc">Llama vs Qwen debatem, DeepSeek-R1 julga.</div>
+        <input type="text" placeholder='ex: "Python vs JS em 2026"' />
+        <button>Rodar</button>
+        <div class="flow">llama vs qwen · deepseek julga</div>
+      </div>
+      <div class="card" data-demo="plan-exec-review">
+        <h3>Plan → Exec → Review</h3>
+        <div class="desc">Llama planeja, Qwen implementa, DeepSeek revisa.</div>
+        <input type="text" placeholder='ex: "parser de CPF em Python"' />
+        <button>Rodar</button>
+        <div class="flow">llama · qwen · deepseek</div>
+      </div>
+      <div class="card" data-demo="reasoning">
+        <h3>Raciocínio</h3>
+        <div class="desc">DeepSeek-R1 resolve mostrando o pensamento.</div>
+        <input type="text" placeholder='ex: "3 galinhas 3 ovos 3 dias..."' />
+        <button>Rodar</button>
+        <div class="flow">deepseek-r1 (streaming)</div>
+      </div>
+    </div>
+    <div id="demo-output"></div>
+  </section>
+
+</main>
+
+<footer>
+  Rodando local em <code>localhost:11434</code> · nenhum byte sai dessa máquina
+</footer>
+
+<script>
+marked.setOptions({
+  highlight:(code,lang)=>{try{return hljs.highlight(code,{language:lang||'plaintext'}).value}catch{return code}},
+  breaks:true, gfm:true
+});
+
+const OLLAMA = (path)=>`http://localhost:11434${path}`;
+const $ = (s)=>document.querySelector(s);
+const statusEl = $('#status'); const statusText = $('#status-text');
+
+async function checkHealth(){
+  try{
+    const r = await fetch(OLLAMA('/api/tags'));
+    if(!r.ok) throw 0;
+    const d = await r.json();
+    const names = d.models.map(m=>m.name);
+    const sel = $('#model'); sel.innerHTML='';
+    const preferred = ['llama3.1:8b','qwen2.5:14b','qwen2.5-coder:14b','deepseek-r1:14b'];
+    const sorted = [...names].sort((a,b)=>{
+      const ai=preferred.indexOf(a), bi=preferred.indexOf(b);
+      if(ai!==-1 && bi!==-1) return ai-bi;
+      if(ai!==-1) return -1; if(bi!==-1) return 1;
+      return a.localeCompare(b);
+    });
+    sorted.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;sel.appendChild(o)});
+    statusEl.className='status ok'; statusText.textContent=`${names.length} modelos`;
+  }catch(e){
+    statusEl.className='status err'; statusText.textContent='Ollama offline';
+  }
+}
+checkHealth();
+
+// tabs
+document.querySelectorAll('nav button').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    $('#tab-'+b.dataset.tab).classList.add('active');
+  };
+});
+
+// === CHAT ===
+const history = [];
+const messagesEl = $('#messages');
+function addMsg(role, text){
+  const div = document.createElement('div');
+  div.className = 'msg '+(role==='user'?'user':'ai');
+  const who = document.createElement('div'); who.className='who';
+  who.textContent = role==='user'?'Você':$('#model').value;
+  div.appendChild(who);
+  const body = document.createElement('div'); body.className='body';
+  body.innerHTML = marked.parse(text||'');
+  div.appendChild(body);
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return body;
+}
+
+async function streamChat(model, messages, onToken){
+  const r = await fetch(OLLAMA('/v1/chat/completions'),{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({model, messages, stream:true, max_tokens:1500})
+  });
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf='';
+  while(true){
+    const {value,done} = await reader.read(); if(done) break;
+    buf += dec.decode(value,{stream:true});
+    const parts = buf.split('\n'); buf = parts.pop();
+    for(const line of parts){
+      if(!line.startsWith('data: ')) continue;
+      const p = line.slice(6).trim(); if(p==='[DONE]') continue;
+      try{ const j=JSON.parse(p); const d=j.choices?.[0]?.delta?.content; if(d) onToken(d); }catch{}
+    }
+  }
+}
+
+$('#composer').onsubmit = async (e)=>{
+  e.preventDefault();
+  const input = $('#input'); const txt = input.value.trim(); if(!txt) return;
+  const model = $('#model').value;
+  if(!model){alert('sem modelo — Ollama rodando?'); return;}
+  addMsg('user', txt); history.push({role:'user',content:txt});
+  input.value=''; input.style.height='auto';
+  const body = addMsg('ai',''); let acc='';
+  const btn = $('#send'); btn.disabled=true; btn.textContent='…';
+  try{
+    await streamChat(model, history, (tok)=>{
+      acc += tok;
+      body.innerHTML = marked.parse(acc);
+      body.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b));
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    });
+    history.push({role:'assistant',content:acc});
+  }catch(err){
+    body.innerHTML = '<em style="color:#ef4444">erro: '+err.message+'</em>';
+  }finally{
+    btn.disabled=false; btn.textContent='Enviar';
+  }
+};
+$('#input').onkeydown = (e)=>{
+  if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); $('#composer').requestSubmit();}
+};
+$('#input').oninput = (e)=>{e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px';};
+$('#clear').onclick = ()=>{history.length=0; messagesEl.innerHTML='';};
+
+// === DEMOS ===
+async function ask(model, content, maxTokens=400){
+  const r = await fetch(OLLAMA('/v1/chat/completions'),{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({model, messages:[{role:'user',content}], max_tokens:maxTokens})
+  });
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const d = await r.json();
+  return d.choices[0].message.content.trim();
+}
+
+const demoOut = $('#demo-output');
+function showDemoOutput(title){
+  $('#demo-cards').style.display='none';
+  demoOut.classList.add('active');
+  demoOut.innerHTML = `<button class="back">← voltar</button><h2 style="margin:0 0 4px">${title}</h2>`;
+  demoOut.querySelector('.back').onclick=()=>{demoOut.classList.remove('active');$('#demo-cards').style.display='grid';};
+}
+function addStep(title, hint){
+  const s = document.createElement('div'); s.className='step';
+  s.innerHTML = `<h4>${title}</h4><div class="body">${hint||'<em style="color:var(--muted)">pensando…</em>'}</div>`;
+  demoOut.appendChild(s);
+  return s.querySelector('.body');
+}
+function render(el, md){ el.innerHTML = marked.parse(md); el.querySelectorAll('pre code').forEach(b=>hljs.highlightElement(b)); }
+
+const demos = {
+  'ai-to-ai': async (topic)=>{
+    showDemoOutput('AI ↔ AI');
+    const p = await runOne('[1/3] Llama bola uma pergunta', 'llama3.1:8b',
+      (topic?`Sobre o tema "${topic}", bole UMA pergunta curta e especifica, em portugues. So a pergunta.`:
+        'Bole UMA pergunta curta e especifica sobre programacao Python, em portugues. So a pergunta.'), 80);
+    const r = await runOne('[2/3] Qwen-Coder responde', 'qwen2.5-coder:14b', p, 500);
+    await runOne('[3/3] Llama comenta', 'llama3.1:8b',
+      `Voce perguntou: "${p}"\n\nA outra IA respondeu:\n${r}\n\nComentario curto em portugues sobre a qualidade da resposta.`, 200);
+  },
+  'debate': async (topic)=>{
+    showDemoOutput('Debate');
+    topic = topic || 'Python vs JavaScript para backend em 2026';
+    addStep('Tema').innerHTML = `<b>${topic}</b>`;
+    const a = await runOne('Llama defende lado A', 'llama3.1:8b',
+      `Defenda o PRIMEIRO lado do tema: "${topic}". Maximo 4 frases, argumentos solidos.`, 280);
+    const b = await runOne('Qwen defende lado B', 'qwen2.5-coder:14b',
+      `Oponente argumentou:\n${a}\n\nDefenda o lado OPOSTO do tema: "${topic}". Maximo 4 frases.`, 280);
+    await runOne('DeepSeek-R1 julga', 'deepseek-r1:14b',
+      `Tema: ${topic}\n\nLado A:\n${a}\n\nLado B:\n${b}\n\nQual lado argumentou melhor? Por que? Maximo 5 frases.`, 500);
+  },
+  'plan-exec-review': async (task)=>{
+    showDemoOutput('Plan → Exec → Review');
+    task = task || 'uma funcao Python que valide CPF';
+    addStep('Tarefa').innerHTML = `<b>${task}</b>`;
+    const p = await runOne('[1/3] Llama planeja', 'llama3.1:8b',
+      `Bole um plano curto (3-5 passos enumerados) para implementar: ${task}. Apenas os passos, sem codigo.`, 350);
+    const c = await runOne('[2/3] Qwen-Coder implementa', 'qwen2.5-coder:14b',
+      `Seguindo este plano:\n${p}\n\nImplemente: ${task}. So o codigo em Python em bloco markdown \`\`\`python.`, 700);
+    await runOne('[3/3] DeepSeek-R1 revisa', 'deepseek-r1:14b',
+      `Revise este codigo Python para a tarefa "${task}":\n\n${c}\n\nAponte bugs, casos-limite, e melhorias. Maximo 5 itens.`, 700);
+  },
+  'reasoning': async (q)=>{
+    showDemoOutput('Raciocínio (DeepSeek-R1)');
+    q = q || 'Se 5 maquinas levam 5 minutos pra fazer 5 widgets, quanto tempo 100 maquinas levam pra fazer 100 widgets?';
+    addStep('Pergunta').innerHTML = `<b>${q}</b>`;
+    const body = addStep('Resposta');
+    let acc='';
+    await streamChat('deepseek-r1:14b',[{role:'user',content:q}],(tok)=>{
+      acc += tok; render(body, acc);
+      demoOut.scrollTop = demoOut.scrollHeight;
+    });
+  },
+};
+
+async function runOne(stepTitle, model, prompt, maxTokens){
+  const body = addStep(`${stepTitle} · <code>${model}</code>`);
+  try{
+    const out = await ask(model, prompt, maxTokens);
+    render(body, out);
+    demoOut.scrollTop = demoOut.scrollHeight;
+    return out;
+  }catch(e){
+    body.innerHTML = '<em style="color:#ef4444">erro: '+e.message+'</em>';
+    throw e;
+  }
+}
+
+document.querySelectorAll('.card button').forEach(btn=>{
+  btn.onclick = async ()=>{
+    const card = btn.closest('.card');
+    const demo = card.dataset.demo;
+    const input = card.querySelector('input').value.trim();
+    btn.disabled=true; btn.textContent='rodando…';
+    try{ await demos[demo](input); }
+    catch(e){ console.error(e); }
+    finally{ btn.disabled=false; btn.textContent='Rodar'; }
+  };
+});
+</script>
+</body>
+</html>
